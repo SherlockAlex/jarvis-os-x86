@@ -1,0 +1,19 @@
+{
+    "files.associations": {
+        "stdtype.h": "c",
+        "interrupt.h": "c",
+        "compare": "cpp",
+        "kerio.h": "c",
+        "malloc.h": "c",
+        "driver.h": "c",
+        "multitask.h": "c",
+        "keyboard.h": "c",
+        "ioctl.h": "c",
+        "block.h": "c",
+        "string.h": "c",
+        "initrd.h": "c",
+        "exfat.h": "c",
+        "file.h": "c",
+        "vfs.h": "c"
+    }
+}

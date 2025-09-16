@@ -1,0 +1,67 @@
+GPPPARAMS = -m32 -Iinclude -fno-use-cxa-atexit -fleading-underscore -fno-exceptions -fno-builtin -nostdlib -fno-rtti -fno-pie
+
+ASPARAMS = --32
+LDPARAMS = -melf_i386 -no-pie
+
+objects = obj/boot/boot.o \
+          obj/kernel/kernel.o \
+	  obj/kernel/kerio.o \
+	  obj/kernel/gdt.o \
+	  obj/kernel/ioctl.o \
+	  obj/kernel/pic.o \
+	  obj/kernel/interrupt/interruptstubs.o \
+	  obj/kernel/interrupt/interrupt.o \
+	  obj/kernel/memory/malloc.o \
+	  obj/kernel/multitask/process.o \
+	  obj/kernel/string.o \
+	  obj/kernel/syscall/syscall.o \
+	  obj/kernel/shell/shell.o \
+	  obj/driver/driver.o \
+	  obj/driver/keyboard.o \
+	  obj/driver/block.o \
+	  obj/fs/vfs.o \
+	  obj/fs/devfs.o
+
+obj/%.o: src/%.c
+	mkdir -p $(@D)
+	gcc ${GPPPARAMS} -o $@ -c $<
+
+obj/%.o: src/%.s
+	mkdir -p $(@D)	
+	as ${ASPARAMS} -o $@ $<
+
+kernel.bin: linker.ld ${objects}
+	ld ${LDPARAMS} -T $< -o $@ ${objects}
+
+install: kernel.bin
+	sudo cp $< /boot/kernel.bin
+
+os.iso: kernel.bin
+	mkdir iso
+	mkdir iso/boot
+	mkdir iso/boot/grub
+	cp $< iso/boot/
+	echo 'set timeout=0' > iso/boot/grub/grub.cfg
+	echo 'set default=0' >> iso/boot/grub/grub.cfg
+	echo '' >> iso/boot/grub/grub.cfg
+	echo 'menuentry "jarvis os" {' >> iso/boot/grub/grub.cfg
+	echo '  multiboot /boot/kernel.bin' >> iso/boot/grub/grub.cfg
+	echo '  boot' >> iso/boot/grub/grub.cfg
+	echo '}' >> iso/boot/grub/grub.cfg
+	grub-mkrescue --output=$@ iso
+	rm -rf iso
+
+run: os.iso
+	qemu-system-i386 -cdrom os.iso -boot d -hda hda.img -m 1G
+
+debug: os.iso
+	qemu-system-i386 -cdrom os.iso -boot d -hda hda.img -m 1G -nographic
+
+
+# 创建一个100MB的空白硬盘镜像
+hda.img:
+	dd if=/dev/zero of=hda.img bs=1M count=100
+
+.PHONY: clean
+clean:
+	rm -rf kernel.bin os.iso obj
