@@ -15,6 +15,12 @@
 
 #include <user/shell/shell.h>
 
+// 全局变量用于存储硬件自检结果
+extern int system_hardware_status;
+
+// 全局变量用于存储驱动器状态
+int drive_exists = 0;
+
 typedef void (*constructor)();
 
 constructor start_ctors;
@@ -28,15 +34,37 @@ void call_constructors()
     }
 }
 
+// 全局变量用于存储硬件自检结果
+int system_hardware_status = 0;
+
+extern int drive_exists;
+
+extern int vfs_mount_status;
+
 void init_user_mode(){
 
     // 初始化系统调用
     kernel_printf("Initializing system calls...\n");
     syscall_init();
 
-    // 创建shell进程
-    kernel_printf("Creating shell process...\n");
-    create_process("shell", shell_main, 0, NULL, KERNEL_MODE, 1);
+    // 检查是否需要启动安装程序
+    // 这里简化处理，实际可以从启动参数中获取
+    extern int installer_main(int argc, char** argv);
+    
+    // 检查是否存在安装标志（这里简单模拟）
+    // 实际系统中，可以通过检查特定的内存位置或启动参数来确定
+    uint32_t* install_flag = (uint32_t*)0x9000; // 使用一个特定的内存位置
+    
+    // 如果设置了安装标志，或者检测到需要格式化（文件系统挂载失败），则启动安装程序
+    if (*install_flag == 0x12345678 || system_hardware_status == 2) {
+        // 启动安装程序
+        kernel_printf("Starting installer...\n");
+        create_process("installer", installer_main, 0, NULL, KERNEL_MODE, 1);
+    } else {
+        // 创建shell进程
+        kernel_printf("Creating shell process...\n");
+        create_process("shell", shell_main, 0, NULL, KERNEL_MODE, 1);
+    }
 }
 
 typedef struct Core{
@@ -129,28 +157,45 @@ void kernel_main(void *multiboot_structure, unsigned int magic_number)
     } else {
         kernel_printf("Failed to initialize EXT4 file system\n");
     }
-
-    // 初始化IDE块设备
-    BlockDevice *ide_device = (BlockDevice*)malloc(sizeof(BlockDevice));
-    if (ide_device) {
-        block_device_initialize(ide_device, 0x1F0, 14);
-        // 将设备添加到活动设备列表
-        active_block_devices[num_block_devices++] = ide_device;
-        kernel_printf("IDE block device initialized successfully\n");
-        
-        // 等待设备初始化完成
-        kernel_printf("Waiting for block device to be ready...\n");
-        for (int i = 0; i < 1000000; i++) asm volatile ("nop");
-        
-        // 挂载EXT4文件系统到根目录
-        if (vfs_mount("/dev/hda0", "/", "ext4") == 0) {
-            kernel_printf("EXT4 file system mounted successfully on root directory\n");
+    
+    // 硬件自检
+    kernel_printf("\n=== Jarvis OS Hardware Check ===\n");
+    kernel_printf("Checking IDE device...\n");
+    drive_exists = ide_check_drive_exists();
+    
+    if (drive_exists) {
+        kernel_printf("IDE device detected\n");
+        // 初始化IDE块设备
+        BlockDevice *ide_device = (BlockDevice*)malloc(sizeof(BlockDevice));
+        if (ide_device) {
+            block_device_initialize(ide_device, 0x1F0, 14);
+            // 将设备添加到活动设备列表
+            active_block_devices[num_block_devices++] = ide_device;
+            kernel_printf("IDE block device initialized successfully\n");
+            
+            // 等待设备初始化完成
+            kernel_printf("Waiting for block device to be ready...\n");
+            for (int i = 0; i < 1000000; i++) asm volatile ("nop");
+            
+            // 尝试挂载EXT4文件系统到根目录
+            int mount_result = vfs_mount("/dev/hda0", "/", "ext4");
+            if (mount_result == 0) {
+                kernel_printf("EXT4 file system mounted successfully on root directory\n");
+                system_hardware_status = 1; // 硬件正常，文件系统已挂载
+            } else {
+                kernel_printf("Warning: Failed to mount EXT4 file system, formatting may be required\n");
+                system_hardware_status = 2; // 硬件正常，但需要格式化
+            }
         } else {
-            kernel_printf("Failed to mount EXT4 file system\n");
+            kernel_printf("Failed to allocate memory for IDE device\n");
+            system_hardware_status = 0; // 硬件检测失败
         }
     } else {
-        kernel_printf("Failed to allocate memory for IDE device\n");
+        kernel_printf("No IDE device detected\n");
+        system_hardware_status = 0; // 硬件检测失败
     }
+    
+    kernel_printf("Hardware check complete\n");
 
     // 通过驱动管理器统一管理所有驱动
     // 键盘驱动已在create_keyboard_driver函数中自动注册到devfs

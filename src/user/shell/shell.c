@@ -61,9 +61,17 @@ void shell_init() {
 void shell_run() {
     char command_line[MAX_COMMAND_LENGTH];
     
+    // 显示光标
+    show_cursor();
+    
     while (1) {
+        
+
         // 打印提示符
         shell_print_prompt();
+        // 确保光标可见
+        
+        
         
         // 读取命令行
         if (shell_read_line(command_line, MAX_COMMAND_LENGTH) < 0) {
@@ -122,7 +130,10 @@ int shell_read_line(char* buffer, int max_length) {
     int i = 0;
     char c;
     
-    while (i < max_length - 1) {
+    while (i < max_length - 1) 
+    {
+        // 显示光标
+        update_cursor();
         // 从键盘读取一个字符
         c = keyboard_getchar();
         

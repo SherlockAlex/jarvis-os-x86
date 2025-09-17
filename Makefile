@@ -23,6 +23,7 @@ objects = obj/boot/boot.o \
 	  obj/fs/devfs.o \
 	  obj/fs/ext4.o \
 	  obj/user/shell/shell.o \
+	  obj/user/installer/installer.o \
 	  obj/stdio.o
 
 obj/%.o: src/%.c
@@ -39,25 +40,30 @@ kernel.bin: linker.ld ${objects}
 install: kernel.bin
 	sudo cp $< /boot/kernel.bin
 
-os.iso: kernel.bin
+iso: kernel.bin
 	mkdir iso
 	mkdir iso/boot
 	mkdir iso/boot/grub
 	cp $< iso/boot/
-	echo 'set timeout=0' > iso/boot/grub/grub.cfg
+	echo 'set timeout=10' > iso/boot/grub/grub.cfg
 	echo 'set default=0' >> iso/boot/grub/grub.cfg
 	echo '' >> iso/boot/grub/grub.cfg
-	echo 'menuentry "jarvis os" {' >> iso/boot/grub/grub.cfg
+	echo 'menuentry "Jarvis OS - launch the temporay system" {' >> iso/boot/grub/grub.cfg
 	echo '  multiboot /boot/kernel.bin' >> iso/boot/grub/grub.cfg
 	echo '  boot' >> iso/boot/grub/grub.cfg
 	echo '}' >> iso/boot/grub/grub.cfg
-	grub-mkrescue --output=$@ iso
+	echo '' >> iso/boot/grub/grub.cfg
+	echo 'menuentry "Jarvis OS - install system" {' >> iso/boot/grub/grub.cfg
+	echo '  multiboot /boot/kernel.bin --install' >> iso/boot/grub/grub.cfg
+	echo '  boot' >> iso/boot/grub/grub.cfg
+	echo '}' >> iso/boot/grub/grub.cfg
+	grub-mkrescue --output=os.iso iso
 	rm -rf iso
 
-run: os.iso
+run: iso
 	qemu-system-i386 -cdrom os.iso -boot d -hda hda.img -m 1G
 
-debug: os.iso
+debug: iso
 	qemu-system-i386 -cdrom os.iso -boot d -hda hda.img -m 1G -nographic
 
 
