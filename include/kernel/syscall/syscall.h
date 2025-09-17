@@ -18,6 +18,21 @@
 #define SYS_getpid     20
 #define SYS_sbrk       45
 #define SYS_yield      64
+#define SYS_mmap       90
+#define SYS_munmap     91
+#define SYS_printf     92
+
+// 内存保护标志定义
+#define PROT_READ    0x01  // 可读
+#define PROT_WRITE   0x02  // 可写
+#define PROT_EXEC    0x04  // 可执行
+#define PROT_NONE    0x00  // 不可访问
+
+// mmap标志定义
+#define MAP_SHARED   0x01  // 共享映射
+#define MAP_PRIVATE  0x02  // 私有映射
+#define MAP_ANONYMOUS 0x04 // 匿名映射
+#define MAP_FIXED    0x10  // 固定地址映射
 
 // 系统调用表项类型定义
 typedef int (*syscall_handler)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, uint32_t arg5);
@@ -38,6 +53,9 @@ extern int syscall_handler_waitpid(uint32_t pid, uint32_t status, uint32_t optio
 extern int syscall_handler_getpid(uint32_t unused1, uint32_t unused2, uint32_t unused3, uint32_t unused4, uint32_t unused5);
 extern int syscall_handler_sbrk(uint32_t increment, uint32_t unused1, uint32_t unused2, uint32_t unused3, uint32_t unused4);
 extern int syscall_handler_yield(uint32_t unused1, uint32_t unused2, uint32_t unused3, uint32_t unused4, uint32_t unused5);
+extern int syscall_handler_mmap(uint32_t addr, uint32_t len, uint32_t prot, uint32_t flags, uint32_t fd);
+extern int syscall_handler_munmap(uint32_t addr, uint32_t len, uint32_t unused1, uint32_t unused2, uint32_t unused3);
+extern size_t syscall_handler_mm_size();
 
 // 系统调用入口点，在中断处理中调用
 extern uint32_t handle_syscall_interrupt(uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi, uint32_t edi);

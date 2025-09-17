@@ -12,15 +12,18 @@ objects = obj/boot/boot.o \
 	  obj/kernel/interrupt/interruptstubs.o \
 	  obj/kernel/interrupt/interrupt.o \
 	  obj/kernel/memory/malloc.o \
+	  obj/kernel/memory/paging.o \
 	  obj/kernel/multitask/process.o \
 	  obj/kernel/string.o \
 	  obj/kernel/syscall/syscall.o \
-	  obj/kernel/shell/shell.o \
 	  obj/driver/driver.o \
 	  obj/driver/keyboard.o \
 	  obj/driver/block.o \
 	  obj/fs/vfs.o \
-	  obj/fs/devfs.o
+	  obj/fs/devfs.o \
+	  obj/fs/ext4.o \
+	  obj/user/shell/shell.o \
+	  obj/stdio.o
 
 obj/%.o: src/%.c
 	mkdir -p $(@D)

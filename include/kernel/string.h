@@ -19,11 +19,17 @@ extern int memcmp(const void *s1, const void *s2, size_t n);
 extern void* memset(void* s, int c, size_t n);
 
 extern char *strchr(const char *s, int c);
+extern char *strrchr(const char *s, int c);
 
 extern char *strncpy(char *dest, const char *src, size_t n);
 
 extern int snprintf(char *str, size_t size, const char *format, ...);
 
 extern char *strdup(const char *s);
+
+extern size_t int_to_string(int32_t num, char* buffer, int base, int uppercase, int width, int precision, int flags);
+
+extern char* strtok(char* str, const char* delim);
+
 
 #endif

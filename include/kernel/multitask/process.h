@@ -3,11 +3,13 @@
 
 #include <stdtype.h>
 #include <kernel/gdt.h>
+#include <kernel/memory/paging.h>
 
 // 进程相关常量定义
 #define PROCESS_MAX_COUNT 64          // 最大进程数量
 #define KERNEL_STACK_SIZE 4096        // 内核栈大小
 #define USER_STACK_SIZE 8192          // 用户栈大小
+#define USER_STACK_BASE 0x80000000    // 用户栈基地址（虚拟地址空间上限）
 #define MAX_PRIORITY_LEVELS 16        // 优先级队列数量
 #define TIME_SLICE_BASE 10            // 基础时间片（毫秒）
 #define DEFAULT_PRIORITY 8            // 默认优先级
@@ -52,17 +54,19 @@ typedef struct Process {
     uint32_t total_runtime;            // 总运行时间（毫秒）
     uint32_t wakeup_time;              // 唤醒时间（如果阻塞）
     
-    // 内存相关
-    void* kernel_stack;                // 内核栈指针
-    uint32_t kernel_stack_size;        // 内核栈大小
-    void* user_stack;                  // 用户栈指针
-    uint32_t user_stack_size;          // 用户栈大小
-    
     // CPU状态
     struct RegisterState* regs;        // 寄存器状态
+    uint32_t* kernel_stack;            // 内核栈
+    uint32_t kernel_stack_size;        // 内核栈大小
+    uint32_t* user_stack;              // 用户栈
+    uint32_t user_stack_size;          // 用户栈大小
     
     // 进程关系
     uint32_t parent_pid;               // 父进程ID
+    
+    // 虚拟内存相关
+    PageDirectory* page_directory;     // 进程页目录
+    MemoryRegion* memory_regions;      // 进程内存区域链表
     
     // 参数和退出码
     int argc;                          // 参数数量

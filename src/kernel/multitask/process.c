@@ -178,25 +178,55 @@ uint32_t create_process(const char* name, int (*entry)(int, char**), int argc, c
     process->argc = argc;
     process->argv = argv;
     process->exit_code = 0;
+    process->memory_regions = NULL;
     
-    // 分配并初始化栈
+    // 创建进程页目录
+    process->page_directory = pd_create();
+    if (!process->page_directory) {
+        kernel_printf("Failed to create page directory\n");
+        free(process);
+        return -1;
+    }
+    
+    // 分配并初始化内核栈
     process->kernel_stack_size = KERNEL_STACK_SIZE;
     process->kernel_stack = malloc(process->kernel_stack_size);
     if (!process->kernel_stack) {
         kernel_printf("Failed to allocate kernel stack\n");
+        pd_destroy(process->page_directory);
         free(process);
         return -1;
     }
     
     if (privilege == USER_MODE) {
+        // 为用户态进程分配用户栈
         process->user_stack_size = USER_STACK_SIZE;
-        process->user_stack = malloc(process->user_stack_size);
-        if (!process->user_stack) {
+        
+        // 用户栈在虚拟地址空间的底部
+        uint32_t user_stack_virtual = USER_STACK_BASE - process->user_stack_size;
+        
+        // 分配并映射用户栈
+        if (vmm_allocate_pages(process->page_directory, user_stack_virtual, process->user_stack_size, 
+                              PTE_PRESENT | PTE_WRITABLE | PTE_USER) != 0) {
             kernel_printf("Failed to allocate user stack\n");
+            pd_destroy(process->page_directory);
             free(process->kernel_stack);
             free(process);
             return -1;
         }
+        
+        // 记录用户栈内存区域
+        MemoryRegion* stack_region = vmm_create_memory_region(user_stack_virtual, 
+                                                           process->user_stack_size, 
+                                                           PTE_PRESENT | PTE_WRITABLE | PTE_USER, 
+                                                           MEMORY_STACK);
+        if (stack_region) {
+            stack_region->next = process->memory_regions;
+            process->memory_regions = stack_region;
+        }
+        
+        // 保存用户栈的虚拟地址
+        process->user_stack = (uint32_t*)user_stack_virtual;
     }
     
     // 设置寄存器状态
@@ -384,6 +414,11 @@ uint32_t schedule(uint32_t esp) {
     // 设置为运行状态
     next_process->state = PROCESS_RUNNING;
     process_manager->current_process = next_process;
+    
+    // 切换到新进程的页目录
+    if (next_process->page_directory) {
+        pd_switch(next_process->page_directory);
+    }
     
     return (uint32_t)next_process->regs;
 }

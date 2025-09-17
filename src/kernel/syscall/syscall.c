@@ -5,6 +5,8 @@
 #include <kernel/string.h>
 #include <kernel/kerio.h>
 #include <stdbool.h>
+#include <kernel/memory/paging.h>
+#include <stdtype.h>
 
 // 声明外部的process_manager变量
 extern ProcessManager* process_manager;
@@ -91,8 +93,6 @@ static void free_fd(int fd) {
     
     table->descriptors[fd] = NULL;
 }
-
-// 系统调用实现
 
 // exit系统调用：终止当前进程
 int syscall_handler_exit(uint32_t exit_code, uint32_t unused1, uint32_t unused2, uint32_t unused3, uint32_t unused4) {
@@ -261,6 +261,112 @@ extern void syscall_init() {
     syscall_table[SYS_getpid] = syscall_handler_getpid;
     syscall_table[SYS_sbrk] = syscall_handler_sbrk;
     syscall_table[SYS_yield] = syscall_handler_yield;
+    syscall_table[SYS_mmap] = syscall_handler_mmap;
+    syscall_table[SYS_munmap] = syscall_handler_munmap;
     
     kernel_printf("System call table initialized\n");
+}
+
+// mmap系统调用：将文件或匿名内存映射到进程的虚拟地址空间
+int syscall_handler_mmap(uint32_t addr, uint32_t len, uint32_t prot, uint32_t flags, uint32_t fd) {
+    Process* current = process_manager->current_process;
+    if (!current) {
+        return -1;
+    }
+
+    // 验证参数有效性
+    if (len == 0) {
+        return -1;
+    }
+
+    // 确保长度是页大小的整数倍
+    len = (len + PAGE_SIZE - 1) & PAGE_MASK;
+
+    // 检查保护标志的有效性
+    uint32_t page_flags = PTE_PRESENT;
+    if (prot & PROT_WRITE) {
+        page_flags |= PTE_WRITABLE;
+    }
+    // 添加用户模式标志
+    page_flags |= PTE_USER;
+
+    // 处理文件映射或匿名映射
+    if (fd != -1 && !(flags & MAP_ANONYMOUS)) {
+        // 文件映射
+        FileDescriptor* file_desc = get_fd(fd);
+        if (!file_desc || !file_desc->inode) {
+            return -1;
+        }
+
+        // 在实际系统中，需要实现按需加载页面（demand paging）
+        // 这里我们只是简单地分配物理内存并映射
+        int result = vmm_allocate_pages(current->page_directory, addr, len, page_flags);
+        if (result != 0) {
+            return -1;
+        }
+
+        // 创建内存区域记录
+        MemoryRegion* region = vmm_create_memory_region(addr, len, page_flags, MEMORY_MAPPED_FILE);
+        if (!region) {
+            vmm_free_pages(current->page_directory, addr, len);
+            return -1;
+        }
+
+        // 将内存区域添加到进程的内存区域链表
+        region->next = current->memory_regions;
+        current->memory_regions = region;
+
+        return addr;
+    } else {
+        // 匿名映射
+        int result = vmm_allocate_pages(current->page_directory, addr, len, page_flags);
+        if (result != 0) {
+            return -1;
+        }
+
+        // 创建内存区域记录
+        MemoryRegion* region = vmm_create_memory_region(addr, len, page_flags, MEMORY_DATA);
+        if (!region) {
+            vmm_free_pages(current->page_directory, addr, len);
+            return -1;
+        }
+
+        // 将内存区域添加到进程的内存区域链表
+        region->next = current->memory_regions;
+        current->memory_regions = region;
+
+        return addr;
+    }
+}
+
+// munmap系统调用：解除内存映射
+int syscall_handler_munmap(uint32_t addr, uint32_t len, uint32_t unused1, uint32_t unused2, uint32_t unused3) {
+    Process* current = process_manager->current_process;
+    if (!current) {
+        return -1;
+    }
+
+    // 验证参数有效性
+    if (len == 0 || (addr & ~PAGE_MASK) != 0) {
+        return -1;
+    }
+
+    // 确保长度是页大小的整数倍
+    len = (len + PAGE_SIZE - 1) & PAGE_MASK;
+
+    // 解除内存映射
+    int result = vmm_free_pages(current->page_directory, addr, len);
+    if (result != 0) {
+        return -1;
+    }
+
+    // 简化实现：从进程的内存区域链表中移除对应的区域
+    // 这里应该查找并移除对应的内存区域，但为简化实现，我们省略具体的内存区域链表操作
+
+    return 0;
+}
+
+extern uint32_t memory_size;
+size_t syscall_handler_mm_size(){
+    return memory_size;
 }

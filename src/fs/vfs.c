@@ -1,6 +1,7 @@
 #include <fs/vfs.h>
 #include <kernel/memory/malloc.h>
 #include <kernel/kerio.h>
+#include <kernel/string.h>
 
 #define MAX_FILE_DESCRIPTORS 1024
 #define MAX_MOUNT_POINTS 32
@@ -98,6 +99,85 @@ static FileSystem* find_filesystem(const char* fs_type) {
     return NULL;
 }
 
+// 查找挂载点
+MountPoint* vfs_find_mount_point(const char* path, char** path_in_fs) {
+    if (!path || !path_in_fs) {
+        return NULL;
+    }
+    
+    // 规范化路径
+    char* normalized_path = vfs_normalize_path(path, "/");
+    if (!normalized_path) {
+        return NULL;
+    }
+    
+    MountPoint* best_match = NULL;
+    size_t best_match_len = 0;
+    
+    // 查找最长匹配的挂载点
+    for (int i = 0; i < num_mount_points; i++) {
+        size_t mount_len = strlen(mount_points[i].path);
+        
+        // 确保挂载点路径以'/'结尾
+        char mount_path[256];
+        strncpy(mount_path, mount_points[i].path, sizeof(mount_path) - 1);
+        if (mount_path[mount_len - 1] != '/') {
+            mount_path[mount_len] = '/';
+            mount_path[mount_len + 1] = '\0';
+            mount_len++;
+        }
+        
+        // 检查路径是否以挂载点路径开头
+        if (strncmp(normalized_path, mount_path, mount_len) == 0) {
+            if (mount_len > best_match_len) {
+                best_match = &mount_points[i];
+                best_match_len = mount_len;
+            }
+        }
+    }
+    
+    // 如果没有找到挂载点，默认使用第一个挂载点（如果存在）
+    if (!best_match && num_mount_points > 0) {
+        best_match = &mount_points[0];
+        best_match_len = strlen(best_match->path);
+    }
+    
+    // 计算相对路径
+    if (best_match) {
+        size_t path_len = strlen(normalized_path);
+        if (best_match_len < path_len) {
+            *path_in_fs = strdup(normalized_path + best_match_len);
+        } else {
+            *path_in_fs = strdup("/");
+        }
+    } else {
+        *path_in_fs = NULL;
+    }
+    
+    free(normalized_path);
+    return best_match;
+}
+
+// 解析路径
+extern Inode* vfs_resolve_path(const char* path) {
+    if (!path) {
+        return NULL;
+    }
+    
+    char* path_in_fs;
+    MountPoint* mp = vfs_find_mount_point(path, &path_in_fs);
+    
+    if (!mp || !path_in_fs) {
+        return NULL;
+    }
+    
+    // 调用文件系统的get_inode函数
+    Inode* inode = mp->fs->get_inode(path_in_fs);
+    
+    free(path_in_fs);
+    return inode;
+}
+
 // 挂载文件系统
 extern int vfs_mount(const char* source, const char* target, const char* fs_type) {
     if (num_mount_points >= MAX_MOUNT_POINTS) {
@@ -164,6 +244,126 @@ extern int vfs_umount(const char* target) {
     return -1;
 }
 
+// 规范化路径
+char* vfs_normalize_path(const char* path, const char* current_dir) {
+    // 如果是绝对路径，直接使用
+    if (path[0] == '/') {
+        return strdup(path);
+    }
+    
+    // 如果是相对路径，结合当前目录
+    size_t curr_len = strlen(current_dir);
+    size_t path_len = strlen(path);
+    size_t new_len = curr_len + path_len + 2; // +2 for '/' and null terminator
+    
+    char* normalized_path = (char*)malloc(new_len);
+    if (!normalized_path) {
+        return NULL;
+    }
+    
+    strcpy(normalized_path, current_dir);
+    
+    // 如果当前目录不以'/'结尾，添加'/'并拼接路径
+    if (curr_len > 0 && current_dir[curr_len - 1] != '/') {
+        snprintf(normalized_path + curr_len, new_len - curr_len, "/%s", path);
+    } else {
+        snprintf(normalized_path + curr_len, new_len - curr_len, "%s", path);
+    }
+    
+    return normalized_path;
+}
+
+// 解析路径为组件
+char** vfs_parse_path(const char* path, int* num_components) {
+    if (!path || !num_components) {
+        return NULL;
+    }
+    
+    // 计算路径组件数量
+    int count = 0;
+    const char* p = path;
+    
+    // 跳过开头的'/'
+    if (*p == '/') {
+        p++;
+    }
+    
+    // 计算组件数量
+    while (*p) {
+        count++;
+        // 找到下一个'/'
+        while (*p && *p != '/') {
+            p++;
+        }
+        // 跳过连续的'/'
+        while (*p && *p == '/') {
+            p++;
+        }
+    }
+    
+    // 分配组件数组
+    char** components = (char**)malloc(sizeof(char*) * (count + 1)); // +1 for NULL terminator
+    if (!components) {
+        *num_components = 0;
+        return NULL;
+    }
+    
+    // 分割路径
+    int i = 0;
+    p = path;
+    
+    // 跳过开头的'/'
+    if (*p == '/') {
+        p++;
+    }
+    
+    while (*p) {
+        const char* start = p;
+        // 找到组件结尾
+        while (*p && *p != '/') {
+            p++;
+        }
+        
+        // 复制组件
+        size_t len = p - start;
+        components[i] = (char*)malloc(len + 1);
+        if (!components[i]) {
+            // 释放已分配的内存
+            vfs_free_path_components(components, i);
+            *num_components = 0;
+            return NULL;
+        }
+        
+        strncpy(components[i], start, len);
+        components[i][len] = '\0';
+        i++;
+        
+        // 跳过连续的'/'
+        while (*p && *p == '/') {
+            p++;
+        }
+    }
+    
+    components[i] = NULL;
+    *num_components = count;
+    return components;
+}
+
+// 释放路径组件
+void vfs_free_path_components(char** components, int num_components) {
+    if (!components) {
+        return;
+    }
+    
+    for (int i = 0; i < num_components; i++) {
+        if (components[i]) {
+            free(components[i]);
+        }
+    }
+    
+    free(components);
+}
+
 // 分配文件描述符
 static int allocate_file_descriptor(Inode* inode, FileOperations* ops, int flags) {
     for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++) {
@@ -181,21 +381,41 @@ static int allocate_file_descriptor(Inode* inode, FileOperations* ops, int flags
 
 // 打开文件
 extern int vfs_open(const char* path, int flags) {
-    // 简单实现：尝试在第一个挂载点查找文件
-    if (num_mount_points > 0) {
-        Inode* inode = mount_points[0].fs->get_inode(path);
-        if (inode) {
-            // 为简化，使用inode中的权限作为文件操作接口
-            int fd = allocate_file_descriptor(inode, (FileOperations*)inode->private_data, flags);
-            if (fd >= 0) {
-                kernel_printf("File '%s' opened with fd %d\n", path, fd);
-                return fd;
-            }
-        }
+    // 解析路径获取inode
+    Inode* inode = vfs_resolve_path(path);
+    if (!inode) {
+        kernel_printf("Failed to open file '%s': No such file or directory\n", path);
+        return -1;
     }
     
-    kernel_printf("Failed to open file '%s'\n", path);
-    return -1;
+    // 获取文件操作接口
+    FileOperations* ops = (FileOperations*)inode->private_data;
+    if (!ops) {
+        kernel_printf("Failed to open file '%s': No file operations available\n", path);
+        vfs_destroy_inode(inode);
+        return -1;
+    }
+    
+    // 调用文件系统的open函数
+    if (ops->open && ops->open(inode, flags) != 0) {
+        kernel_printf("Failed to open file '%s': Operation failed\n", path);
+        vfs_destroy_inode(inode);
+        return -1;
+    }
+    
+    // 分配文件描述符
+    int fd = allocate_file_descriptor(inode, ops, flags);
+    if (fd < 0) {
+        kernel_printf("Failed to open file '%s': No file descriptors available\n", path);
+        if (ops->close) {
+            ops->close(inode);
+        }
+        vfs_destroy_inode(inode);
+        return -1;
+    }
+    
+    kernel_printf("File '%s' opened with fd %d\n", path, fd);
+    return fd;
 }
 
 // 关闭文件
@@ -284,4 +504,183 @@ extern int vfs_ioctl(int fd, int request, void* argp) {
     }
     
     return desc->ops->ioctl(desc->inode, request, argp);
+}
+
+// 打开目录
+extern int vfs_opendir(const char* path) {
+    // 解析路径获取inode
+    Inode* inode = vfs_resolve_path(path);
+    if (!inode) {
+        kernel_printf("Failed to open directory '%s': No such directory\n", path);
+        return -1;
+    }
+    
+    // 检查是否为目录
+    if (inode->type != FILE_TYPE_DIRECTORY) {
+        kernel_printf("Failed to open directory '%s': Not a directory\n", path);
+        vfs_destroy_inode(inode);
+        return -1;
+    }
+    
+    // 获取文件操作接口
+    FileOperations* ops = (FileOperations*)inode->private_data;
+    if (!ops) {
+        kernel_printf("Failed to open directory '%s': No directory operations available\n", path);
+        vfs_destroy_inode(inode);
+        return -1;
+    }
+    
+    // 调用文件系统的opendir函数
+    if (ops->opendir && ops->opendir(inode) != 0) {
+        kernel_printf("Failed to open directory '%s': Operation failed\n", path);
+        vfs_destroy_inode(inode);
+        return -1;
+    }
+    
+    // 分配文件描述符
+    int fd = allocate_file_descriptor(inode, ops, O_RDONLY);
+    if (fd < 0) {
+        kernel_printf("Failed to open directory '%s': No file descriptors available\n", path);
+        if (ops->closedir) {
+            ops->closedir(inode);
+        }
+        vfs_destroy_inode(inode);
+        return -1;
+    }
+    
+    return fd;
+}
+
+// 关闭目录
+extern int vfs_closedir(int fd) {
+    return vfs_close(fd);
+}
+
+// 读取目录
+extern int vfs_readdir(int fd, DirectoryEntry* entry) {
+    if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || file_descriptors[fd].ref_count == 0 || !entry) {
+        kernel_printf("Invalid file descriptor or entry\n");
+        return -1;
+    }
+    
+    FileDescriptor* desc = &file_descriptors[fd];
+    if (!desc->ops || !desc->ops->readdir || desc->inode->type != FILE_TYPE_DIRECTORY) {
+        kernel_printf("Not a directory or readdir not supported\n");
+        return -1;
+    }
+    
+    // 调用文件系统的readdir函数
+    if (desc->ops->readdir(desc->inode, entry->name, sizeof(entry->name), &entry->type) != 0) {
+        return -1;
+    }
+    
+    return 0;
+}
+
+// 创建目录
+extern int vfs_mkdir(const char* path, uint32_t permissions) {
+    // 检查参数
+    if (!path || strlen(path) == 0) {
+        kernel_printf("Invalid path\n");
+        return -1;
+    }
+    
+    char* path_in_fs;
+    MountPoint* mp = vfs_find_mount_point(path, &path_in_fs);
+    
+    if (!mp || !path_in_fs) {
+        kernel_printf("No suitable file system found for path '%s'\n", path);
+        return -1;
+    }
+    
+    // 检查文件系统是否支持创建目录
+    if (!mp->fs->mkdir) {
+        kernel_printf("File system does not support directory creation\n");
+        free(path_in_fs);
+        return -1;
+    }
+    
+    // 调用具体文件系统的mkdir实现
+    int result = mp->fs->mkdir(path_in_fs, permissions);
+    free(path_in_fs);
+    
+    if (result != 0) {
+        kernel_printf("Failed to create directory '%s'\n", path);
+        return result;
+    }
+    
+    kernel_printf("Directory '%s' created successfully\n", path);
+    return 0;
+}
+
+// 删除目录
+extern int vfs_rmdir(const char* path) {
+    // 检查参数
+    if (!path || strlen(path) == 0) {
+        kernel_printf("Invalid path\n");
+        return -1;
+    }
+    
+    char* path_in_fs;
+    MountPoint* mp = vfs_find_mount_point(path, &path_in_fs);
+    
+    if (!mp || !path_in_fs) {
+        kernel_printf("No suitable file system found for path '%s'\n", path);
+        return -1;
+    }
+    
+    // 检查文件系统是否支持删除目录
+    if (!mp->fs->rmdir) {
+        kernel_printf("File system does not support directory deletion\n");
+        free(path_in_fs);
+        return -1;
+    }
+    
+    // 调用具体文件系统的rmdir实现
+    int result = mp->fs->rmdir(path_in_fs);
+    free(path_in_fs);
+    
+    if (result != 0) {
+        kernel_printf("Failed to delete directory '%s'\n", path);
+        return result;
+    }
+    
+    kernel_printf("Directory '%s' deleted successfully\n", path);
+    return 0;
+}
+
+// 删除文件
+extern int vfs_remove(const char* path) {
+    // 检查参数
+    if (!path || strlen(path) == 0) {
+        kernel_printf("Invalid path\n");
+        return -1;
+    }
+    
+    char* path_in_fs;
+    MountPoint* mp = vfs_find_mount_point(path, &path_in_fs);
+    
+    if (!mp || !path_in_fs) {
+        kernel_printf("No suitable file system found for path '%s'\n", path);
+        return -1;
+    }
+    
+    // 检查文件系统是否支持删除文件
+    if (!mp->fs->remove) {
+        kernel_printf("File system does not support file deletion\n");
+        free(path_in_fs);
+        return -1;
+    }
+    
+    // 调用具体文件系统的remove实现
+    int result = mp->fs->remove(path_in_fs);
+    free(path_in_fs);
+    
+    if (result != 0) {
+        kernel_printf("Failed to delete file '%s'\n", path);
+        return result;
+    }
+    
+    kernel_printf("File '%s' deleted successfully\n", path);
+    return 0;
 }

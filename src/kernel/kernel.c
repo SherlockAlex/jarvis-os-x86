@@ -7,10 +7,13 @@
 #include <kernel/multitask/process.h>
 #include <driver/driver.h>
 #include <driver/block.h>
+#include <driver/keyboard.h>
 #include <fs/vfs.h>
 #include <fs/devfs.h>
+#include <fs/ext4.h>
 #include <kernel/syscall/syscall.h>
-#include <kernel/shell/shell.h>
+
+#include <user/shell/shell.h>
 
 typedef void (*constructor)();
 
@@ -43,9 +46,13 @@ typedef struct Core{
     InterruptManager interrupt_manager;
 
     MemoryManager memory_manager;
+    VirtualMemoryManager virtual_memory_manager;
     DriverManager driver_manager; // 修改为结构体而不是指针
     ProcessManager process_manager;
 } Core;
+
+uint32_t memupper_global;
+size_t memory_size;
 
 int on_init_core(Core* core,void *multiboot_structure, unsigned int magic_number)
 {
@@ -66,14 +73,20 @@ int on_init_core(Core* core,void *multiboot_structure, unsigned int magic_number
     kernel_printf("memupper address: %x\n", memupper);
     kernel_printf("memupper value: %d KB\n", *memupper);
     kernel_printf("Total memory: %d MB\n", (*memupper) / 1024);
+    memupper_global = *memupper;
     
     // 计算可用内存大小 - 正确的公式应该是从heap开始到memupper*1024的所有内存
-    size_t mem_size = (*memupper) * 1024 - heap;
+    memory_size = (*memupper) * 1024 - heap;
     kernel_printf("Heap start: %x\n", heap);
-    kernel_printf("Heap size: %d bytes\n", mem_size);
-    kernel_printf("Memory manager will manage memory from %x to %x\n", heap, heap + mem_size);
+    kernel_printf("Heap size: %d bytes\n", memory_size);
+    kernel_printf("Memory manager will manage memory from %x to %x\n", heap, heap + memory_size);
+
+    on_init_memory_manager(&core->memory_manager, heap, memory_size);
     
-    on_init_memory_manager(&core->memory_manager, heap, mem_size);
+    // 初始化虚拟内存管理器
+    uint32_t kernel_start = 0x0100000;
+    uint32_t kernel_end = heap;       // 内核结束于堆的起始位置
+    //on_init_virtual_memory_manager(&core->virtual_memory_manager, kernel_start, kernel_end);
 
     process_manager_init(&core->process_manager, &core->gdt);
 
@@ -91,8 +104,8 @@ void activate(Core* core){
 
 void kernel_main(void *multiboot_structure, unsigned int magic_number)
 {
-
     Core core;
+
     on_init_core(&core,multiboot_structure, magic_number);    
     
     // 初始化虚拟文件系统
@@ -109,6 +122,13 @@ void kernel_main(void *multiboot_structure, unsigned int magic_number)
     } else {
         kernel_printf("Failed to mount devfs\n");
     }
+    
+    // 初始化EXT4文件系统
+    if (ext4_init() == 0) {
+        kernel_printf("EXT4 file system initialized\n");
+    } else {
+        kernel_printf("Failed to initialize EXT4 file system\n");
+    }
 
     // 初始化IDE块设备
     BlockDevice *ide_device = (BlockDevice*)malloc(sizeof(BlockDevice));
@@ -117,6 +137,17 @@ void kernel_main(void *multiboot_structure, unsigned int magic_number)
         // 将设备添加到活动设备列表
         active_block_devices[num_block_devices++] = ide_device;
         kernel_printf("IDE block device initialized successfully\n");
+        
+        // 等待设备初始化完成
+        kernel_printf("Waiting for block device to be ready...\n");
+        for (int i = 0; i < 1000000; i++) asm volatile ("nop");
+        
+        // 挂载EXT4文件系统到根目录
+        if (vfs_mount("/dev/hda0", "/", "ext4") == 0) {
+            kernel_printf("EXT4 file system mounted successfully on root directory\n");
+        } else {
+            kernel_printf("Failed to mount EXT4 file system\n");
+        }
     } else {
         kernel_printf("Failed to allocate memory for IDE device\n");
     }
